@@ -89,13 +89,23 @@ Se você preferir executar o programa sem instalar dependências do Python:
   * `data/settings.json`: Configurações de preferência do usuário (ex: visualizador de PDF preferido).
   * `data/history.json`: Histórico local das pesquisas recentes.
 
+## Recursos de Performance e Acurácia
+
+O buscador possui algoritmos avançados integrados para garantir resultados de alto nível e velocidade extrema:
+* **Pré-normalização na Indexação:** A limpeza de texto (diacríticos, acentos, pontuação, caixa baixa) é feita uma única vez na indexação e salva no banco na coluna `text_normalized`, dobrando a velocidade das buscas.
+* **Corretor Ortográfico (Spellcheck) Offline:** Correção automática de erros de digitação baseada no vocabulário dos seus manuais indexados e busca por aproximação via `difflib`.
+* **Fórmula de Score Ponderada:** Ordenação baseada em pesos calibrados: Cobertura de Termos (50%), relevância BM25 (35%) e Proximidade de Termos (15%).
+* **Busca por Radical (Stemming):** Stemmer integrado para o português que mapeia plurais, gêneros e derivações de volta ao radical, rodando buscas exatas e por radical em paralelo para máxima revocação.
+* **Filtros e Atalhos:** Filtre os resultados instantaneamente na tabela por pasta/categoria e use `Ctrl+F` para focar na busca e `Esc` para limpar.
+
 ## Executando os testes
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-46 testes unitários e de integração cobrindo banco de dados, extração de PDF, indexação incremental com hashes SHA-256, modos de busca, filtros, histórico e abertura de arquivos.
+48 testes unitários e de integração cobrindo banco de dados, extração de PDF, indexação incremental com hashes SHA-256, modos de busca, filtros, histórico, corretor ortográfico, stemming e abertura de arquivos.
+
 Para rodar os testes de performance, execute:
 ```bash
 RUN_PERFORMANCE_TESTS=1 python tests/test_performance.py

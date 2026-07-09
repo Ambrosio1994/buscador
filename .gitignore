@@ -15,3 +15,4 @@ venv/
 *.log
 .vscode/
 .idea/
+*.csv

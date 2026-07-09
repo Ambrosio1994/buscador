@@ -52,39 +52,58 @@ def encontrar_navegador_preferencial() -> str | None:
 def open_pdf_at_page(path: str, page_number: int, termos_busca: str | None = None) -> str:
     """
     Abre o PDF informado na página indicada, destacando os termos se fornecidos.
-    Tenta as seguintes opções em ordem:
-    1. Chamar o binário de navegador preferencial encontrado via encontrar_navegador_preferencial()
-       (usando --app se for um navegador baseado em Chromium/Brave/Chrome).
-    2. Usar o executável definido na variável de ambiente $BROWSER.
-    3. Cair para o comportamento padrão do python (webbrowser.open) como último recurso.
+    Respeita a configuração de visualizador preferencial salva pelo usuário e
+    cai para fallbacks (Evince, Okular, Navegadores, xdg-open) se necessário.
 
-    Retorna a URI utilizada para abrir o arquivo.
+    Retorna a URI ou o comando utilizado para abrir o arquivo.
     Levanta ArquivoNaoEncontradoError se o arquivo não existir.
     """
     if not os.path.isfile(path):
         raise ArquivoNaoEncontradoError(f"Arquivo não encontrado: {path}")
 
+    from config import obter_setting
+    visualizador = obter_setting("visualizador_pdf", "sistema")
     uri = construir_uri_pdf(path, page_number, termos_busca)
 
-    # 1. Tentar navegador preferencial encontrado
+    # 1. Tentar o visualizador configurado pelo usuário se for específico
+    if visualizador == "evince" and shutil.which("evince"):
+        try:
+            subprocess.Popen(["evince", "-p", str(page_number), path])
+            return uri
+        except Exception:
+            pass
+    elif visualizador == "okular" and shutil.which("okular"):
+        try:
+            subprocess.Popen(["okular", "-p", str(page_number), path])
+            return uri
+        except Exception:
+            pass
+    elif visualizador in ["brave-browser", "google-chrome", "chromium", "firefox"]:
+        binario = shutil.which(visualizador)
+        if binario:
+            try:
+                if visualizador in ["brave-browser", "google-chrome", "chromium"]:
+                    subprocess.Popen([binario, f"--app={uri}"])
+                else:
+                    subprocess.Popen([binario, uri])
+                return uri
+            except Exception:
+                pass
+
+    # 2. Se estiver em modo 'sistema' (ou se o preferencial falhou), tenta navegadores preferenciais
     binario_navegador = encontrar_navegador_preferencial()
     if binario_navegador:
         nome_binario = os.path.basename(binario_navegador).lower()
-        # Se for baseado em Chromium/Brave/Chrome, usa modo app para interface limpa (sem abas)
-        if any(c in nome_binario for c in ["brave", "chrome", "chromium"]):
-            try:
+        try:
+            if any(c in nome_binario for c in ["brave", "chrome", "chromium"]):
                 subprocess.Popen([binario_navegador, f"--app={uri}"])
-                return uri
-            except Exception:
-                pass
-        else:
-            try:
+            else:
                 subprocess.Popen([binario_navegador, uri])
-                return uri
-            except Exception:
-                pass
+            return uri
+        except Exception:
+            pass
 
-    # 2. Tentar a variável de ambiente $BROWSER
+    # 3. Tentar a variável de ambiente $BROWSER
     env_browser = os.environ.get("BROWSER")
     if env_browser:
         binario_env = shutil.which(env_browser)
@@ -95,7 +114,28 @@ def open_pdf_at_page(path: str, page_number: int, termos_busca: str | None = Non
             except Exception:
                 pass
 
-    # 3. Fallback: comportamento original
+    # 4. Tenta Evince ou Okular se estiverem instalados (apenas em modo sistema)
+    if visualizador == "sistema":
+        for viewer in ["evince", "okular"]:
+            if shutil.which(viewer):
+                try:
+                    if viewer == "evince":
+                        subprocess.Popen(["evince", "-p", str(page_number), path])
+                    else:
+                        subprocess.Popen(["okular", "-p", str(page_number), path])
+                    return uri
+                except Exception:
+                    pass
+
+    # 5. Fallback final usando xdg-open do Linux (apenas em modo sistema)
+    if visualizador == "sistema" and shutil.which("xdg-open"):
+        try:
+            subprocess.Popen(["xdg-open", path])
+            return uri
+        except Exception:
+            pass
+
+    # 6. Fallback extremo: webbrowser
     webbrowser.open(uri)
     return uri
 

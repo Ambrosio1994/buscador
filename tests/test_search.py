@@ -96,6 +96,28 @@ class TestSearch(unittest.TestCase):
         self.assertIn(1, paginas_preciso)
         self.assertNotIn(3, paginas_preciso)
 
+    def test_busca_modo_frase_exata(self):
+        # "operacoes defensivas" deve casar a página 1 pois a frase exata existe lá
+        resultados = search.buscar(self.conn, "operacoes defensivas", modo="frase")
+        self.assertEqual(len(resultados), 1)
+        self.assertEqual(resultados[0]["page_number"], 1)
+
+        # "defensivas operacoes" não deve casar nenhuma página no modo frase
+        resultados_invertido = search.buscar(self.conn, "defensivas operacoes", modo="frase")
+        self.assertEqual(resultados_invertido, [])
+
+        # Mas no modo preciso (AND), a ordem não importa e deve casar a página 1
+        resultados_preciso = search.buscar(self.conn, "defensivas operacoes", modo="preciso")
+        self.assertEqual(len(resultados_preciso), 1)
+        self.assertEqual(resultados_preciso[0]["page_number"], 1)
+
+    def test_classificacao_relevancia(self):
+        resultados = search.buscar(self.conn, "operacoes defensivas", modo="amplo")
+        # Deve ter a página 1 (2/2 termos = Alta) e a página 3 (1/2 termos = Baixa)
+        relevancias = {r["page_number"]: r["relevance_label"] for r in resultados}
+        self.assertEqual(relevancias[1], "Alta")
+        self.assertEqual(relevancias[3], "Baixa")
+
 
 class TestNormalizacaoDeConsulta(unittest.TestCase):
     def test_normalizar_consulta(self):

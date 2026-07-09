@@ -44,16 +44,17 @@ class ResultadoIndexacao:
 
 
 def listar_pdfs_da_pasta(pasta: str) -> List[str]:
-    """Retorna os caminhos absolutos de todos os arquivos .pdf da pasta (não recursivo)."""
+    """Retorna os caminhos absolutos de todos os arquivos .pdf da pasta e subpastas (recursivo)."""
     if not os.path.isdir(pasta):
         return []
 
     arquivos = []
-    for nome in sorted(os.listdir(pasta)):
-        caminho = os.path.join(pasta, nome)
-        if os.path.isfile(caminho) and nome.lower().endswith(PDF_EXTENSION):
-            arquivos.append(os.path.abspath(caminho))
-    return arquivos
+    for raiz, _, files in os.walk(pasta):
+        for nome in sorted(files):
+            if nome.lower().endswith(PDF_EXTENSION):
+                caminho = os.path.join(raiz, nome)
+                arquivos.append(os.path.abspath(caminho))
+    return sorted(arquivos)
 
 
 def calcular_sha256(caminho: str) -> str:

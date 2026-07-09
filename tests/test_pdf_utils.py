@@ -66,6 +66,20 @@ class TestPdfUtils(unittest.TestCase):
         with self.assertRaises(pdf_utils.PDFInvalidoError):
             pdf_utils.extrair_texto_pdf(caminho)
 
+    def _criar_pdf_protegido(self, nome="protegido.pdf"):
+        caminho = os.path.join(self.diretorio_temp, nome)
+        doc = fitz.open()
+        pagina = doc.new_page()
+        pagina.insert_text((72, 72), "Texto secreto")
+        doc.save(caminho, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="123", owner_pw="123")
+        doc.close()
+        return caminho
+
+    def test_pdf_protegido_por_senha(self):
+        caminho = self._criar_pdf_protegido()
+        with self.assertRaises(pdf_utils.PDFInvalidoError):
+            pdf_utils.extrair_texto_pdf(caminho)
+
     def test_contagem_correta_de_paginas(self):
         caminho = self._criar_pdf_com_texto(
             paginas_com_texto=("p1", "p2", "p3", "p4")

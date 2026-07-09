@@ -51,3 +51,69 @@ PREFERRED_BROWSERS = [
 def garantir_diretorio_dados() -> None:
     """Garante que o diretório de dados exista antes de usar o banco."""
     os.makedirs(DATA_DIR, exist_ok=True)
+
+
+SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+
+
+def obter_setting(chave: str, padrao: str = "") -> str:
+    """Obtém uma configuração do arquivo settings.json."""
+    import json
+    garantir_diretorio_dados()
+    if not os.path.exists(SETTINGS_PATH):
+        return padrao
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get(chave, padrao)
+    except Exception:
+        return padrao
+
+
+def salvar_setting(chave: str, valor: str) -> None:
+    """Salva uma configuração no arquivo settings.json."""
+    import json
+    garantir_diretorio_dados()
+    data = {}
+    if os.path.exists(SETTINGS_PATH):
+        try:
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    data[chave] = valor
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception:
+        pass
+
+
+HISTORY_PATH = os.path.join(DATA_DIR, "history.json")
+
+
+def obter_historico() -> list[str]:
+    """Obtém o histórico de buscas do arquivo history.json."""
+    import json
+    garantir_diretorio_dados()
+    if not os.path.exists(HISTORY_PATH):
+        return []
+    try:
+        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+            return []
+    except Exception:
+        return []
+
+
+def salvar_historico(historico: list[str]) -> None:
+    """Salva o histórico de buscas no arquivo history.json."""
+    import json
+    garantir_diretorio_dados()
+    try:
+        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(historico, f, ensure_ascii=False, indent=4)
+    except Exception:
+        pass

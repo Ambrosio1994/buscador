@@ -51,7 +51,8 @@ class TestOpener(unittest.TestCase):
     @patch.dict("os.environ", {"BROWSER": "firefox"})
     def test_open_pdf_at_page_chama_browser_env(self, mock_popen, mock_which, mock_find):
         mock_find.return_value = None
-        mock_which.return_value = "/usr/bin/firefox"
+        # Mock class/side effect so that only 'firefox' exists
+        mock_which.side_effect = lambda cmd: "/usr/bin/firefox" if cmd == "firefox" else None
 
         uri_retornada = opener.open_pdf_at_page(self.arquivo_temp.name, 5)
 
@@ -59,10 +60,12 @@ class TestOpener(unittest.TestCase):
         self.assertIn("#page=5", uri_retornada)
 
     @patch("opener.encontrar_navegador_preferencial")
+    @patch("shutil.which")
     @patch("opener.webbrowser.open")
     @patch.dict("os.environ", {}, clear=True)
-    def test_open_pdf_at_page_fallback_webbrowser(self, mock_webbrowser_open, mock_find):
+    def test_open_pdf_at_page_fallback_webbrowser(self, mock_webbrowser_open, mock_which, mock_find):
         mock_find.return_value = None
+        mock_which.return_value = None
 
         uri_retornada = opener.open_pdf_at_page(self.arquivo_temp.name, 5)
 

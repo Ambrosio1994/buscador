@@ -14,14 +14,30 @@ limitado).
 
 ## Instalação (Linux Mint)
 
-```bash
-sudo apt update
-sudo apt install python3 python3-pip python3-tk
-pip install pymupdf --break-system-packages
-```
+1. Instale o Python, o gerenciador de pacotes, o Tkinter e suporte a ambientes virtuais do sistema operacional:
+   ```bash
+   sudo apt update
+   sudo apt install python3 python3-pip python3-tk python3-venv
+   ```
+
+2. Crie um ambiente virtual na raiz do projeto:
+   ```bash
+   python3 -m venv .venv
+   ```
+
+3. Ative o ambiente virtual:
+   ```bash
+   source .venv/bin/activate
+   ```
+
+4. Instale as dependências necessárias do projeto:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## Como usar
 
+Com o ambiente virtual ativado, execute o sistema pela interface gráfica:
 ```bash
 python3 app.py
 ```
@@ -60,20 +76,36 @@ python3 -m unittest discover -s tests -v
 35 testes cobrindo banco de dados, extração de PDF, indexação, busca e
 abertura de arquivo.
 
-## Limitações da primeira versão (MVP)
+## Como usar o Executável (Release)
 
-- PDFs escaneados como imagem (sem texto extraível) não são pesquisáveis —
-  o sistema apenas avisa quando isso ocorre. OCR fica para uma versão futura.
-- Não há destaque visual de sinônimos, correção ortográfica ou histórico de
-  buscas nesta versão (ver seção "Melhorias futuras" na especificação
-  original).
+Se você preferir executar o programa sem instalar dependências do Python:
+1. Baixe o executável `app` da aba **Releases** no GitHub.
+2. Dê permissão de execução para o arquivo:
+   ```bash
+   chmod +x app
+   ```
+3. Execute o programa dando um duplo clique ou executando no terminal:
+   ```bash
+   ./app
+   ```
 
-## Desempenho observado
+## Segurança e Privacidade (100% Offline)
 
-Em teste de carga com 30 PDFs de 40 páginas (1.200 páginas no total):
+* **Sem conexão de rede:** O sistema é totalmente offline. Nenhuma informação, consulta textual ou documento em PDF é enviado para a internet.
+* **Dependências locais:** Não há dependências que realizem chamadas externas.
+* **Onde os dados ficam salvos:** Todos os dados gerados (banco de índice e histórico) ficam armazenados localmente na subpasta `data` do diretório do programa:
+  * `data/search_index.db`: Banco de dados SQLite com os textos indexados e metadados.
+  * `data/settings.json`: Configurações de preferência do usuário (ex: visualizador de PDF preferido).
+  * `data/history.json`: Histórico local das pesquisas recentes.
 
-- Indexação completa: ~0,3s
-- Busca (qualquer consulta): 1,7ms a 2,6ms
-- Reindexação sem alterações: instantânea
+## Executando os testes
 
-Bem dentro do critério de aceite de "busca em menos de 1 segundo".
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+46 testes unitários e de integração cobrindo banco de dados, extração de PDF, indexação incremental com hashes SHA-256, modos de busca, filtros, histórico e abertura de arquivos.
+Para rodar os testes de performance, execute:
+```bash
+RUN_PERFORMANCE_TESTS=1 python tests/test_performance.py
+```

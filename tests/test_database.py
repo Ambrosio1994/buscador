@@ -88,6 +88,23 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(database.contar_documentos(self.conn), 2)
         self.assertEqual(database.contar_paginas(self.conn), 2)
 
+    def test_limpeza_completa_do_banco(self):
+        database.criar_banco(self.conn)
+        doc_id = database.inserir_documento(
+            self.conn, "manual.pdf", "/tmp/manual.pdf", 1024, 111.0, 1, 222.0
+        )
+        database.inserir_pagina(self.conn, doc_id, 1, "conteudo qualquer")
+        self.assertEqual(database.contar_documentos(self.conn), 1)
+        self.assertEqual(database.contar_paginas(self.conn), 1)
+
+        # Deleta todos os documentos
+        self.conn.execute("DELETE FROM documents;")
+        self.conn.commit()
+
+        # Verifica se cascade removeu as paginas e o indice FTS5
+        self.assertEqual(database.contar_documentos(self.conn), 0)
+        self.assertEqual(database.contar_paginas(self.conn), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

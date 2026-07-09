@@ -102,6 +102,28 @@ class TestIndexer(unittest.TestCase):
         self.assertIn("manual1.pdf", resultado.removidos)
         self.assertEqual(database.contar_documentos(self.conn), 0)
 
+    def test_indexar_subpastas(self):
+        # Cria estrutura de subpastas: diretorio_temp/categoria_a/manual_a.pdf
+        subpasta = os.path.join(self.diretorio_temp, "categoria_a")
+        os.makedirs(subpasta, exist_ok=True)
+
+        caminho_sub = os.path.join(subpasta, "manual_a.pdf")
+        doc = fitz.open()
+        pagina = doc.new_page()
+        pagina.insert_text((72, 72), "Conteudo do manual na subpasta")
+        doc.save(caminho_sub)
+        doc.close()
+
+        resultado = indexer.indexar_pasta(self.conn, self.diretorio_temp)
+
+        self.assertIn("manual_a.pdf", resultado.novos)
+        self.assertEqual(database.contar_documentos(self.conn), 1)
+
+        # Garante que o caminho completo está no banco
+        reg = database.buscar_documento_por_path(self.conn, os.path.abspath(caminho_sub))
+        self.assertIsNotNone(reg)
+        self.assertEqual(reg["filename"], "manual_a.pdf")
+
     def test_lidar_com_pasta_vazia(self):
         resultado = indexer.indexar_pasta(self.conn, self.diretorio_temp)
         self.assertEqual(resultado.novos, [])

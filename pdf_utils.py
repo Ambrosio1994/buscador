@@ -86,6 +86,10 @@ class _abrir_documento:
             raise PDFInvalidoError(
                 f"Não foi possível abrir o PDF (arquivo corrompido?): {self.path}"
             ) from exc
+
+        if self.doc.is_encrypted:
+            raise PDFInvalidoError(f"Arquivo protegido por senha: {self.path}")
+
         return self.doc
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

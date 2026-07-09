@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+
+build/
+dist/
+*.spec
+
+data/
+*.db
+*.db-wal
+*.db-shm
+
+.venv/
+venv/
+*.log
+.vscode/
+.idea/

@@ -67,15 +67,6 @@ buscador_manuais/
     └── search_index.db     # Banco de índice (gerado automaticamente)
 ```
 
-## Executando os testes
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-35 testes cobrindo banco de dados, extração de PDF, indexação, busca e
-abertura de arquivo.
-
 ## Como usar o Executável (Release)
 
 Se você preferir executar o programa sem instalar dependências do Python:

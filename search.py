@@ -46,6 +46,67 @@ def normalizar_consulta(consulta: str) -> str:
     return texto
 
 
+def stemizar_palavra(palavra: str) -> str:
+    """
+    Reduz uma palavra em português ao seu radical de forma simplificada e eficiente.
+    Remove plurais, gêneros e sufixos comuns.
+    """
+    if len(palavra) < 4:
+        return palavra
+
+    w = palavra.lower()
+
+    # 1. Plurais
+    if w.endswith("s"):
+        if w.endswith("ns"):
+            w = w[:-2] + "m"
+        elif w.endswith("es"):
+            if w.endswith("coes"):
+                w = w[:-4] + "cao"
+            else:
+                w = w[:-2]
+        elif w.endswith("is"):
+            if w.endswith("ais"):
+                w = w[:-3] + "al"
+            elif w.endswith("eis"):
+                w = w[:-3] + "el"
+            elif w.endswith("ois"):
+                w = w[:-3] + "ol"
+            elif w.endswith("uis"):
+                w = w[:-3] + "ul"
+            else:
+                w = w[:-1]
+        else:
+            w = w[:-1]
+
+    # 2. Sufixo Adverbial
+    if w.endswith("mente"):
+        w = w[:-5]
+
+    # 3. Sufixos Nominais / Gênero
+    if w.endswith("cao"):
+        w = w[:-3] + "ca"
+    
+    if w.endswith("al") and len(w) > 4:
+        w = w[:-2]
+        
+    if w.endswith("idade") and len(w) > 6:
+        w = w[:-5]
+
+    # 4. Redução de Gênero
+    if w.endswith("a") and not w.endswith("ia"):
+        w = w[:-1] + "o"
+
+    return w
+
+
+def stemizar_texto(texto: str) -> str:
+    """Aplica o stemmer simplificado sobre todas as palavras de um texto normalizado."""
+    if not texto:
+        return ""
+    return " ".join(stemizar_palavra(w) for w in texto.split())
+
+
 def remover_palavras_irrelevantes(consulta_normalizada: str) -> List[str]:
     """Remove stopwords da consulta já normalizada, retornando a lista de termos relevantes."""
     palavras = consulta_normalizada.split()
@@ -82,20 +143,16 @@ def montar_query_fts(termos: List[str], modo: str = "amplo") -> str:
         return " OR ".join(termos_fts)
 
 
-def calcular_score_customizado(
-    texto_pagina: str, termos: List[str], bm25_score: float, modo: str = "amplo"
-) -> tuple[float, str]:
+def calcular_janela_e_matches(
+    texto_norm: str, termos: List[str]
+) -> tuple[int, int]:
     """
-    Calcula um score personalizado baseado no número de termos casados
-    e na proximidade entre eles.
-    
-    Retorna (score_customizado, etiqueta_relevancia).
+    Calcula a quantidade de termos únicos casados e a menor janela de proximidade.
+    Retorna (n_matched_terms, window_size).
     """
     if not termos:
-        return bm25_score, "Baixa"
+        return 0, 1000
 
-    # Normaliza o texto da página
-    texto_norm = normalizar_consulta(texto_pagina)
     palavras_texto = texto_norm.split()
     
     # Encontra ocorrências de cada termo (por prefixo)
@@ -106,10 +163,9 @@ def calcular_score_customizado(
             ocorrencias[t] = indices
             
     n_matched_terms = len(ocorrencias)
-    L = len(termos)
     
     if n_matched_terms == 0:
-        return bm25_score, "Baixa"
+        return 0, 1000
 
     # Proximidade: menor janela contendo todos os termos casados
     if n_matched_terms > 1:
@@ -142,25 +198,7 @@ def calcular_score_customizado(
     else:
         window_size = 1
         
-    # Ajuste do score: mais termos casados diminui o score drasticamente.
-    # Proximidade (window_size) adiciona uma penalidade leve.
-    # BM25 entra como critério de desempate.
-    score_customizado = -1000.0 * n_matched_terms + 0.1 * window_size + bm25_score
-    
-    # Classificação visual da relevância
-    if modo == "frase" or modo == "preciso":
-        relevancia = "Alta"
-    elif L == 1:
-        relevancia = "Alta"
-    else:
-        if n_matched_terms == L:
-            relevancia = "Alta"
-        elif n_matched_terms >= L / 2 and n_matched_terms > 1:
-            relevancia = "Média"
-        else:
-            relevancia = "Baixa"
-            
-    return score_customizado, relevancia
+    return n_matched_terms, window_size
 
 
 def buscar(
@@ -171,9 +209,9 @@ def buscar(
 ) -> List[ResultadoBusca]:
     """
     Executa a busca completa: normaliza a consulta, remove stopwords,
-    monta a query FTS5 no modo selecionado (amplo, preciso ou frase) e retorna
-    os resultados ordenados por relevância baseada em score customizado
-    (número de termos combinados e proximidade).
+    busca tanto de forma exata quanto por radical (stemmer) em paralelo,
+    mescla as duas listas priorizando os resultados exatos e ordena
+    por score ponderado (cobertura de termos, proximidade e BM25).
 
     Retorna lista vazia se a consulta for vazia ou não houver resultados.
     """
@@ -182,19 +220,51 @@ def buscar(
         return []
 
     termos = remover_palavras_irrelevantes(consulta_normalizada)
+    
+    # Spellcheck/Fuzzy Correction usando vocabulário local
+    import difflib
+    try:
+        cursor_vocab = conn.execute("SELECT word FROM vocabulary;")
+        vocabulario = {row["word"] for row in cursor_vocab.fetchall()}
+    except Exception:
+        vocabulario = set()
+
+    termos_corrigidos = []
+    for t in termos:
+        if len(t) < 4:
+            termos_corrigidos.append(t)
+            continue
+        # Se o termo já existe (ou tem palavra começando com ele), não altera
+        if t in vocabulario or any(w.startswith(t) for w in vocabulario):
+            termos_corrigidos.append(t)
+        else:
+            matches = difflib.get_close_matches(t, vocabulario, n=1, cutoff=0.75)
+            if matches:
+                termos_corrigidos.append(matches[0])
+            else:
+                termos_corrigidos.append(t)
+                
+    termos = termos_corrigidos
     query_fts = montar_query_fts(termos, modo)
     if not query_fts:
         return []
 
-    # Aumentamos o limite no SQL para podermos reordenar via Python
+    # Termos stemizados para a busca secundária por radical
+    termos_stemmed = [stemizar_palavra(t) for t in termos]
+    query_fts_stemmed = montar_query_fts(termos_stemmed, modo)
+
+    # Limite aumentado no SQL para reordenação no Python
     limite_sql = max(limite * 4, 100)
 
-    sql = """
+    # 1. SQL para busca exata (pages_fts)
+    sql_exact = """
         SELECT
             documents.filename,
             documents.path,
             pages.page_number,
             pages.text,
+            pages.text_normalized,
+            pages.text_stemmed,
             snippet(pages_fts, 0, '[', ']', '...', ?) AS snippet_text,
             bm25(pages_fts) AS score
         FROM pages_fts
@@ -205,30 +275,128 @@ def buscar(
         LIMIT ?;
     """
 
+    # 2. SQL para busca por radical (pages_stemmed_fts)
+    sql_stemmed = """
+        SELECT
+            documents.filename,
+            documents.path,
+            pages.page_number,
+            pages.text,
+            pages.text_normalized,
+            pages.text_stemmed,
+            snippet(pages_stemmed_fts, 0, '[', ']', '...', ?) AS snippet_text,
+            bm25(pages_stemmed_fts) AS score
+        FROM pages_stemmed_fts
+        JOIN pages ON pages_stemmed_fts.rowid = pages.id
+        JOIN documents ON pages.document_id = documents.id
+        WHERE pages_stemmed_fts MATCH ?
+        ORDER BY score
+        LIMIT ?;
+    """
+
+    rows_exact = []
     try:
-        cursor = conn.execute(sql, (SNIPPET_CONTEXT_WORDS, query_fts, limite_sql))
+        cursor = conn.execute(sql_exact, (SNIPPET_CONTEXT_WORDS, query_fts, limite_sql))
+        rows_exact = cursor.fetchall()
     except sqlite3.OperationalError:
-        # Consulta FTS malformada (ex.: apenas caracteres especiais) -> sem resultados.
+        pass
+
+    rows_stemmed = []
+    try:
+        cursor_s = conn.execute(sql_stemmed, (SNIPPET_CONTEXT_WORDS, query_fts_stemmed, limite_sql))
+        rows_stemmed = cursor_s.fetchall()
+    except sqlite3.OperationalError:
+        pass
+
+    if not rows_exact and not rows_stemmed:
         return []
 
-    resultados_brutos = []
-    for row in cursor.fetchall():
-        score_custom, relevancia = calcular_score_customizado(
-            row["text"], termos, row["score"], modo
-        )
-        
-        resultados_brutos.append(
-            {
-                "filename": row["filename"],
-                "path": row["path"],
-                "page_number": row["page_number"],
-                "snippet": row["snippet_text"],
-                "score": score_custom,
-                "relevance_label": relevancia,
-            }
-        )
+    L = len(termos)
+    candidatos_dict = {}
 
-    # Ordena pelo score personalizado (menor score = mais relevante)
-    resultados_brutos.sort(key=lambda x: x["score"])
+    # Insere resultados da busca exata
+    for row in rows_exact:
+        key = (row["path"], row["page_number"])
+        texto_norm = row["text_normalized"] if row["text_normalized"] is not None else normalizar_consulta(row["text"])
+        n_matched_terms, window_size = calcular_janela_e_matches(texto_norm, termos)
+        candidatos_dict[key] = {
+            "row": row,
+            "n_matched_terms": n_matched_terms,
+            "window_size": window_size,
+            "bm25": row["score"],
+            "is_exact": True
+        }
+
+    # Insere resultados da busca por radical (se não existirem já)
+    for row in rows_stemmed:
+        key = (row["path"], row["page_number"])
+        if key not in candidatos_dict:
+            texto_norm = row["text_normalized"] if row["text_normalized"] is not None else normalizar_consulta(row["text"])
+            n_matched_terms, window_size = calcular_janela_e_matches(texto_norm, termos)
+            candidatos_dict[key] = {
+                "row": row,
+                "n_matched_terms": n_matched_terms,
+                "window_size": window_size,
+                "bm25": row["score"],
+                "is_exact": False
+            }
+
+    candidatos = list(candidatos_dict.values())
+
+    # Normalização dos sinais
+    w_min = min(c["window_size"] for c in candidatos)
+    w_max = max(c["window_size"] for c in candidatos)
+    b_min = min(c["bm25"] for c in candidatos)
+    b_max = max(c["bm25"] for c in candidatos)
+
+    resultados_brutos = []
+    for c in candidatos:
+        row = c["row"]
+        n_matched = c["n_matched_terms"]
+        w = c["window_size"]
+        b = c["bm25"]
+
+        cobertura_norm = n_matched / L if L > 0 else 0.0
+
+        if w_max > w_min:
+            proximidade_norm = 1.0 - (w - w_min) / (w_max - w_min)
+        else:
+            proximidade_norm = 1.0
+
+        if b_max > b_min:
+            bm25_norm = (b_max - b) / (b_max - b_min)
+        else:
+            bm25_norm = 1.0
+
+        score_final = 0.50 * cobertura_norm + 0.35 * bm25_norm + 0.15 * proximidade_norm
+
+        # Penalidade para resultados que só casaram via radical (stemmer)
+        if not c["is_exact"]:
+            score_final = score_final * 0.80
+
+        # Classificação de relevância
+        if modo == "frase" or modo == "preciso":
+            relevancia = "Alta"
+        elif L <= 1:
+            relevancia = "Alta"
+        else:
+            if n_matched == L:
+                relevancia = "Alta"
+            elif n_matched >= L / 2 and n_matched > 1:
+                relevancia = "Média"
+            else:
+                relevancia = "Baixa"
+
+        resultados_brutos.append({
+            "filename": row["filename"],
+            "path": row["path"],
+            "page_number": row["page_number"],
+            "snippet": row["snippet_text"],
+            "score": score_final,
+            "relevance_label": relevancia,
+        })
+
+    # Ordena pelo score final combinado decrescente
+    resultados_brutos.sort(key=lambda x: x["score"], reverse=True)
     
     return resultados_brutos[:limite]

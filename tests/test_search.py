@@ -118,6 +118,29 @@ class TestSearch(unittest.TestCase):
         self.assertEqual(relevancias[1], "Alta")
         self.assertEqual(relevancias[3], "Baixa")
 
+    def test_busca_fuzzy_spellcheck(self):
+        # Atualiza o vocabulário a partir das páginas inseridas no setUp
+        database.atualizar_vocabulario(self.conn)
+
+        # Faz uma busca com erro de digitação ("infraestutura" -> deve corrigir para "infraestrutura")
+        resultados = search.buscar(self.conn, "infraestutura", modo="amplo")
+        self.assertNotEqual(resultados, [])
+        self.assertEqual(resultados[0]["page_number"], 1)
+
+    def test_busca_stemming(self):
+        # Insere uma página com o plural "manuais"
+        database.inserir_pagina(
+            self.conn,
+            document_id=1,
+            page_number=4,
+            text="Esta página descreve os manuais técnicos."
+        )
+        # A busca pelo singular "manual" deve encontrar a página com "manuais"
+        resultados = search.buscar(self.conn, "manual", modo="amplo")
+        self.assertNotEqual(resultados, [])
+        paginas_encontradas = {r["page_number"] for r in resultados}
+        self.assertIn(4, paginas_encontradas)
+
 
 class TestNormalizacaoDeConsulta(unittest.TestCase):
     def test_normalizar_consulta(self):

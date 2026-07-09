@@ -108,8 +108,9 @@ def _indexar_arquivo(
         sha256=sha256_val,
     )
 
+    from search import normalizar_consulta
     paginas_lote = [
-        (document_id, p["page_number"], p["text"])
+        (document_id, p["page_number"], p["text"], normalizar_consulta(p["text"]))
         for p in paginas
         if p["text"]
     ]
@@ -181,6 +182,7 @@ def indexar_pasta(
 
         _indexar_arquivo(conn, caminho, registro_existente, resultado)
 
+    database.atualizar_vocabulario(conn)
     conn.commit()
 
     resultado.tempo_execucao = time.perf_counter() - inicio

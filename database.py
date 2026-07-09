@@ -72,10 +72,20 @@ def criar_banco(conn: sqlite3.Connection) -> None:
             document_id INTEGER NOT NULL,
             page_number INTEGER NOT NULL,
             text TEXT NOT NULL,
+            text_normalized TEXT,
+            text_stemmed TEXT,
             FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
         );
         """
     )
+
+    # Migração: adiciona as colunas caso a tabela já exista sem elas
+    cursor = conn.execute("PRAGMA table_info(pages);")
+    colunas_pages = [row["name"] for row in cursor.fetchall()]
+    if "text_normalized" not in colunas_pages:
+        conn.execute("ALTER TABLE pages ADD COLUMN text_normalized TEXT;")
+    if "text_stemmed" not in colunas_pages:
+        conn.execute("ALTER TABLE pages ADD COLUMN text_stemmed TEXT;")
 
     conn.execute(
         """
@@ -88,11 +98,23 @@ def criar_banco(conn: sqlite3.Connection) -> None:
         """
     )
 
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS pages_stemmed_fts USING fts5(
+            text_stemmed,
+            content='pages',
+            content_rowid='id',
+            tokenize='unicode61 remove_diacritics 2'
+        );
+        """
+    )
+
     # Triggers para sincronização automática com o índice FTS5 (external content)
     conn.execute(
         """
         CREATE TRIGGER IF NOT EXISTS t_pages_ai AFTER INSERT ON pages BEGIN
             INSERT INTO pages_fts(rowid, text) VALUES(new.id, new.text);
+            INSERT INTO pages_stemmed_fts(rowid, text_stemmed) VALUES(new.id, new.text_stemmed);
         END;
         """
     )
@@ -101,6 +123,7 @@ def criar_banco(conn: sqlite3.Connection) -> None:
         """
         CREATE TRIGGER IF NOT EXISTS t_pages_ad AFTER DELETE ON pages BEGIN
             INSERT INTO pages_fts(pages_fts, rowid, text) VALUES('delete', old.id, old.text);
+            INSERT INTO pages_stemmed_fts(pages_stemmed_fts, rowid, text_stemmed) VALUES('delete', old.id, old.text_stemmed);
         END;
         """
     )
@@ -108,6 +131,14 @@ def criar_banco(conn: sqlite3.Connection) -> None:
     # Índice de apoio para acelerar as verificações de páginas por documento
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_pages_document_id ON pages(document_id);"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vocabulary (
+            word TEXT PRIMARY KEY
+        );
+        """
     )
 
     conn.commit()
@@ -195,29 +226,54 @@ def contar_documentos(conn: sqlite3.Connection) -> int:
 # ---------------------------------------------------------------------------
 
 def inserir_pagina(
-    conn: sqlite3.Connection, document_id: int, page_number: int, text: str
+    conn: sqlite3.Connection,
+    document_id: int,
+    page_number: int,
+    text: str,
+    text_normalized: Optional[str] = None,
+    text_stemmed: Optional[str] = None
 ) -> int:
     """
-    Insere uma página no banco. O trigger 't_pages_ai' cuidará de
-    replicar o texto na tabela virtual FTS5.
+    Insere uma página no banco. Os triggers cuidarão de
+    replicar o texto nas tabelas virtuais FTS5.
     """
+    from search import normalizar_consulta, stemizar_texto
+    if text_normalized is None:
+        text_normalized = normalizar_consulta(text)
+    if text_stemmed is None:
+        text_stemmed = stemizar_texto(text_normalized)
     cursor = conn.execute(
-        "INSERT INTO pages (document_id, page_number, text) VALUES (?, ?, ?);",
-        (document_id, page_number, text),
+        "INSERT INTO pages (document_id, page_number, text, text_normalized, text_stemmed) VALUES (?, ?, ?, ?, ?);",
+        (document_id, page_number, text, text_normalized, text_stemmed),
     )
     return cursor.lastrowid
 
 
 def inserir_paginas_lote(
-    conn: sqlite3.Connection, paginas: list[tuple[int, int, str]]
+    conn: sqlite3.Connection, paginas: list
 ) -> None:
     """
-    Insere múltiplas páginas de uma vez. O trigger 't_pages_ai' atualizará
-    automaticamente a tabela virtual FTS5 para cada página inserida.
+    Insere múltiplas páginas de uma vez. Os triggers atualizarão
+    automaticamente as tabelas virtuais FTS5 para cada página inserida.
     """
+    from search import normalizar_consulta, stemizar_texto
+    processado = []
+    for item in paginas:
+        if len(item) == 3:
+            doc_id, p_num, txt = item
+            txt_norm = normalizar_consulta(txt)
+            txt_stem = stemizar_texto(txt_norm)
+            processado.append((doc_id, p_num, txt, txt_norm, txt_stem))
+        elif len(item) == 4:
+            doc_id, p_num, txt, txt_norm = item
+            txt_stem = stemizar_texto(txt_norm)
+            processado.append((doc_id, p_num, txt, txt_norm, txt_stem))
+        else:
+            processado.append(item)
+
     conn.executemany(
-        "INSERT INTO pages (document_id, page_number, text) VALUES (?, ?, ?);",
-        paginas,
+        "INSERT INTO pages (document_id, page_number, text, text_normalized, text_stemmed) VALUES (?, ?, ?, ?, ?);",
+        processado,
     )
 
 
@@ -225,3 +281,25 @@ def contar_paginas(conn: sqlite3.Connection) -> int:
     """Retorna a quantidade total de páginas indexadas."""
     cursor = conn.execute("SELECT COUNT(*) AS total FROM pages;")
     return cursor.fetchone()["total"]
+
+
+def atualizar_vocabulario(conn: sqlite3.Connection) -> None:
+    """
+    Atualiza a lista de termos únicos e válidos na tabela virtual/auxiliar 'vocabulary'
+    a partir da coluna 'text_normalized' de todas as páginas.
+    """
+    conn.execute("DELETE FROM vocabulary;")
+    cursor = conn.execute("SELECT text_normalized FROM pages;")
+    palavras_unicas = set()
+    for row in cursor:
+        texto = row["text_normalized"]
+        if texto:
+            for palavra in texto.split():
+                # Apenas palavras com pelo menos 3 letras e puramente alfabéticas
+                if len(palavra) >= 3 and palavra.isalpha():
+                    palavras_unicas.add(palavra)
+    
+    conn.executemany(
+        "INSERT OR IGNORE INTO vocabulary (word) VALUES (?);",
+        [(w,) for w in palavras_unicas]
+    )

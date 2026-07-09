@@ -83,6 +83,19 @@ class TestSearch(unittest.TestCase):
         resultados = search.buscar(self.conn, "operacoes", limite=1)
         self.assertEqual(len(resultados), 1)
 
+    def test_busca_modo_amplo_vs_preciso(self):
+        # Modo amplo (OR) deve retornar as páginas 1 e 3 para a query "operacoes defensivas"
+        resultados_amplo = search.buscar(self.conn, "operacoes defensivas", modo="amplo")
+        paginas_amplo = {r["page_number"] for r in resultados_amplo}
+        self.assertIn(1, paginas_amplo)
+        self.assertIn(3, paginas_amplo)
+
+        # Modo preciso (AND) deve retornar apenas a página 1 (que contém ambas as palavras)
+        resultados_preciso = search.buscar(self.conn, "operacoes defensivas", modo="preciso")
+        paginas_preciso = {r["page_number"] for r in resultados_preciso}
+        self.assertIn(1, paginas_preciso)
+        self.assertNotIn(3, paginas_preciso)
+
 
 class TestNormalizacaoDeConsulta(unittest.TestCase):
     def test_normalizar_consulta(self):

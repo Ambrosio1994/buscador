@@ -68,6 +68,30 @@ class TestIndexer(unittest.TestCase):
 
         self.assertIn("manual1.pdf", resultado.atualizados)
 
+    def test_nao_reindexar_se_conteudo_igual_mas_data_diferente(self):
+        caminho = self._criar_pdf("manual1.pdf", "Mesmo conteudo")
+        indexer.indexar_pasta(self.conn, self.diretorio_temp)
+
+        # Guarda registro original
+        reg_original = database.buscar_documento_por_path(self.conn, caminho)
+        self.assertIsNotNone(reg_original)
+
+        time.sleep(0.05)
+        # Toca no arquivo (muda apenas a data de modificação)
+        os.utime(caminho, None)
+        stat = os.stat(caminho)
+        self.assertNotEqual(reg_original["modified_at"], stat.st_mtime)
+
+        resultado = indexer.indexar_pasta(self.conn, self.diretorio_temp)
+
+        # Deve marcar como inalterados (mesmo hash sha256)
+        self.assertIn("manual1.pdf", resultado.inalterados)
+        self.assertNotIn("manual1.pdf", resultado.atualizados)
+
+        # E os metadados no banco devem ter sido atualizados com a nova data
+        reg_novo = database.buscar_documento_por_path(self.conn, caminho)
+        self.assertAlmostEqual(reg_novo["modified_at"], stat.st_mtime, places=4)
+
     def test_remover_do_indice_pdf_apagado(self):
         caminho = self._criar_pdf("manual1.pdf")
         indexer.indexar_pasta(self.conn, self.diretorio_temp)

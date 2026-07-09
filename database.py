@@ -52,11 +52,18 @@ def criar_banco(conn: sqlite3.Connection) -> None:
             path TEXT NOT NULL UNIQUE,
             file_size INTEGER NOT NULL,
             modified_at REAL NOT NULL,
+            sha256 TEXT,
             total_pages INTEGER,
             indexed_at REAL NOT NULL
         );
         """
     )
+
+    # Migração: adiciona a coluna sha256 caso a tabela já exista sem ela
+    cursor = conn.execute("PRAGMA table_info(documents);")
+    colunas = [row["name"] for row in cursor.fetchall()]
+    if "sha256" not in colunas:
+        conn.execute("ALTER TABLE documents ADD COLUMN sha256 TEXT;")
 
     conn.execute(
         """
@@ -118,16 +125,36 @@ def inserir_documento(
     modified_at: float,
     total_pages: int,
     indexed_at: float,
+    sha256: str = "",
 ) -> int:
     """Insere um novo documento e retorna o id gerado."""
     cursor = conn.execute(
         """
-        INSERT INTO documents (filename, path, file_size, modified_at, total_pages, indexed_at)
-        VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO documents (filename, path, file_size, modified_at, sha256, total_pages, indexed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
         """,
-        (filename, path, file_size, modified_at, total_pages, indexed_at),
+        (filename, path, file_size, modified_at, sha256, total_pages, indexed_at),
     )
     return cursor.lastrowid
+
+
+def atualizar_metadados_documento(
+    conn: sqlite3.Connection,
+    document_id: int,
+    file_size: int,
+    modified_at: float,
+    sha256: str,
+    indexed_at: float,
+) -> None:
+    """Atualiza metadados e o hash de um documento existente."""
+    conn.execute(
+        """
+        UPDATE documents
+        SET file_size = ?, modified_at = ?, sha256 = ?, indexed_at = ?
+        WHERE id = ?;
+        """,
+        (file_size, modified_at, sha256, indexed_at, document_id),
+    )
 
 
 def buscar_documento_por_path(

@@ -13,6 +13,7 @@ Regra fundamental (seção 7.2 da especificação): a busca nunca lê os PDFs
 diretamente. Toda leitura acontece aqui, durante a indexação.
 """
 
+import hashlib
 import os
 import sqlite3
 import time
@@ -55,12 +56,16 @@ def listar_pdfs_da_pasta(pasta: str) -> List[str]:
     return arquivos
 
 
-def _arquivo_mudou(registro: sqlite3.Row, tamanho_atual: int, modificado_em_atual: float) -> bool:
-    """Compara metadados atuais do arquivo com o que está salvo no banco."""
-    return (
-        registro["file_size"] != tamanho_atual
-        or registro["modified_at"] != modificado_em_atual
-    )
+def calcular_sha256(caminho: str) -> str:
+    """Calcula o hash SHA-256 de um arquivo lendo-o em blocos."""
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(caminho, "rb") as f:
+            for byte_block in iter(lambda: f.read(65536), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except Exception:
+        return ""
 
 
 def _indexar_arquivo(
@@ -85,6 +90,7 @@ def _indexar_arquivo(
 
     stat = os.stat(caminho)
     agora = time.time()
+    sha256_val = calcular_sha256(caminho)
 
     # Se já existia, remove o registro antigo (e páginas associadas) antes de reindexar.
     if registro_existente is not None:
@@ -98,6 +104,7 @@ def _indexar_arquivo(
         modified_at=stat.st_mtime,
         total_pages=len(paginas),
         indexed_at=agora,
+        sha256=sha256_val,
     )
 
     paginas_lote = [
@@ -148,7 +155,26 @@ def indexar_pasta(
 
         if registro_existente is not None:
             stat = os.stat(caminho)
-            if not _arquivo_mudou(registro_existente, stat.st_size, stat.st_mtime):
+            # 1. Se tamanho e data de modificação forem idênticos, assume inalterado sem calcular hash (rápido)
+            if (registro_existente["file_size"] == stat.st_size 
+                    and registro_existente["modified_at"] == stat.st_mtime):
+                resultado.inalterados.append(nome_arquivo)
+                continue
+
+            # 2. Se mudou data ou tamanho, calcula o SHA-256 para verificar alteração real
+            sha256_atual = calcular_sha256(caminho)
+            
+            # Se o hash coincide com o salvo (e não for nulo/vazio), o conteúdo real é idêntico
+            if registro_existente["sha256"] and registro_existente["sha256"] == sha256_atual:
+                # Apenas atualizamos metadados no banco para evitar novos cálculos no futuro
+                database.atualizar_metadados_documento(
+                    conn,
+                    registro_existente["id"],
+                    stat.st_size,
+                    stat.st_mtime,
+                    sha256_atual,
+                    time.time(),
+                )
                 resultado.inalterados.append(nome_arquivo)
                 continue
 

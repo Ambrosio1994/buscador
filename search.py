@@ -51,16 +51,13 @@ def remover_palavras_irrelevantes(consulta_normalizada: str) -> List[str]:
     return [palavra for palavra in palavras if palavra not in STOPWORDS]
 
 
-def montar_query_fts(termos: List[str]) -> str:
+def montar_query_fts(termos: List[str], modo: str = "amplo") -> str:
     """
     Monta a expressão de busca para o FTS5 a partir dos termos relevantes.
 
-    Cada termo recebe um '*' para permitir correspondência por prefixo
-    (ex.: "operac*" também encontra "operações", já sem acentos por causa
-    do tokenizer 'unicode61 remove_diacritics 2'), e os termos são
-    combinados com OR para que páginas com apenas alguns dos termos
-    também apareçam, ficando o ranking (BM25) responsável por priorizar
-    as páginas com mais termos e maior frequência.
+    Cada termo recebe um '*' para permitir correspondência por prefixo.
+    - No modo 'amplo', os termos são combinados com OR (comportamento original).
+    - No modo 'preciso', os termos são combinados com AND, exigindo a presença de todos.
     """
     termos_validos = [t for t in termos if t]
     if not termos_validos:
@@ -68,16 +65,23 @@ def montar_query_fts(termos: List[str]) -> str:
 
     termos_fts = [f'{re.sub(r"[^\w]", "", t)}*' for t in termos_validos if t]
     termos_fts = [t for t in termos_fts if t != "*"]
-    return " OR ".join(termos_fts)
+    
+    if modo == "preciso":
+        return " AND ".join(termos_fts)
+    else:
+        return " OR ".join(termos_fts)
 
 
 def buscar(
-    conn: sqlite3.Connection, consulta: str, limite: int = MAX_RESULTS
+    conn: sqlite3.Connection,
+    consulta: str,
+    limite: int = MAX_RESULTS,
+    modo: str = "amplo",
 ) -> List[ResultadoBusca]:
     """
     Executa a busca completa: normaliza a consulta, remove stopwords,
-    monta a query FTS5 e retorna os resultados ordenados por relevância
-    (BM25 crescente = mais relevante primeiro).
+    monta a query FTS5 no modo selecionado (amplo ou preciso) e retorna
+    os resultados ordenados por relevância (BM25 crescente = mais relevante primeiro).
 
     Retorna lista vazia se a consulta for vazia ou não houver resultados.
     """
@@ -86,7 +90,7 @@ def buscar(
         return []
 
     termos = remover_palavras_irrelevantes(consulta_normalizada)
-    query_fts = montar_query_fts(termos)
+    query_fts = montar_query_fts(termos, modo)
     if not query_fts:
         return []
 

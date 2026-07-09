@@ -75,7 +75,7 @@ class BuscadorApp(tk.Tk):
         self.botao_indexar.pack(side=tk.RIGHT)
 
         # --- Barra de busca ---
-        frame_busca = ttk.Frame(self, padding=(10, 0, 10, 10))
+        frame_busca = ttk.Frame(self, padding=(10, 0, 10, 5))
         frame_busca.pack(fill=tk.X)
 
         self.entrada_busca = ttk.Entry(frame_busca, font=("TkDefaultFont", 12))
@@ -86,20 +86,44 @@ class BuscadorApp(tk.Tk):
             side=tk.LEFT, padx=(5, 0)
         )
 
+        # --- Opções de busca (Modo Amplo / Modo Preciso) ---
+        frame_opcoes_busca = ttk.Frame(self, padding=(10, 0, 10, 10))
+        frame_opcoes_busca.pack(fill=tk.X)
+
+        self.modo_busca_var = tk.StringVar(value="amplo")
+
+        radio_amplo = ttk.Radiobutton(
+            frame_opcoes_busca,
+            text="Modo Amplo (qualquer termo - OR)",
+            variable=self.modo_busca_var,
+            value="amplo",
+        )
+        radio_amplo.pack(side=tk.LEFT, padx=(0, 15))
+
+        radio_preciso = ttk.Radiobutton(
+            frame_opcoes_busca,
+            text="Modo Preciso (todos os termos - AND)",
+            variable=self.modo_busca_var,
+            value="preciso",
+        )
+        radio_preciso.pack(side=tk.LEFT)
+
         # --- Lista de resultados ---
         frame_resultados = ttk.Frame(self, padding=(10, 0, 10, 10))
         frame_resultados.pack(fill=tk.BOTH, expand=True)
 
-        colunas = ("manual", "pagina", "trecho")
+        colunas = ("manual", "pagina", "relevancia", "trecho")
         self.tabela = ttk.Treeview(
             frame_resultados, columns=colunas, show="headings", selectmode="browse"
         )
         self.tabela.heading("manual", text="Manual")
         self.tabela.heading("pagina", text="Página")
+        self.tabela.heading("relevancia", text="Relevância")
         self.tabela.heading("trecho", text="Trecho encontrado")
         self.tabela.column("manual", width=200, anchor=tk.W)
         self.tabela.column("pagina", width=70, anchor=tk.CENTER)
-        self.tabela.column("trecho", width=550, anchor=tk.W)
+        self.tabela.column("relevancia", width=90, anchor=tk.CENTER)
+        self.tabela.column("trecho", width=460, anchor=tk.W)
 
         scrollbar = ttk.Scrollbar(
             frame_resultados, orient=tk.VERTICAL, command=self.tabela.yview
@@ -230,9 +254,11 @@ class BuscadorApp(tk.Tk):
             self.status_var.set("Digite uma palavra-chave, frase ou pergunta para buscar.")
             return
 
+        modo = self.modo_busca_var.get()
+
         try:
             with database.get_connection(DATABASE_PATH) as conn:
-                resultados = search.buscar(conn, consulta)
+                resultados = search.buscar(conn, consulta, modo=modo)
         except Exception as exc:
             messagebox.showerror("Erro na busca", str(exc))
             return
@@ -247,7 +273,12 @@ class BuscadorApp(tk.Tk):
             self.tabela.insert(
                 "",
                 tk.END,
-                values=(resultado["filename"], resultado["page_number"], resultado["snippet"]),
+                values=(
+                    resultado["filename"],
+                    resultado["page_number"],
+                    f"{resultado['score']:.2f}",
+                    resultado["snippet"],
+                ),
             )
 
         self.status_var.set(f"{len(resultados)} resultado(s) encontrado(s).")

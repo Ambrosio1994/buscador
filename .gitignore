@@ -4,8 +4,6 @@ __pycache__/
 simbolo_easa.png
 simbolo_easa.webp
 build/
-dist/*
-!dist/app
 *.spec
 
 data/

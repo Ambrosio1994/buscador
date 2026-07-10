@@ -3,7 +3,6 @@ __pycache__/
 
 simbolo_easa.png
 simbolo_easa.webp
-build/
 *.spec
 
 data/

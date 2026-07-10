@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 
+simbolo_easa.png
+simbolo_easa.webp
 build/
 dist/*
 !dist/app

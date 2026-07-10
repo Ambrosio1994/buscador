@@ -84,10 +84,14 @@ Se você preferir executar o programa sem instalar dependências do Python:
 
 * **Sem conexão de rede:** O sistema é totalmente offline. Nenhuma informação, consulta textual ou documento em PDF é enviado para a internet.
 * **Dependências locais:** Não há dependências que realizem chamadas externas.
-* **Onde os dados ficam salvos:** Todos os dados gerados (banco de índice e histórico) ficam armazenados localmente na subpasta `data` do diretório do programa:
-  * `data/search_index.db`: Banco de dados SQLite com os textos indexados e metadados.
-  * `data/settings.json`: Configurações de preferência do usuário (ex: visualizador de PDF preferido).
-  * `data/history.json`: Histórico local das pesquisas recentes.
+* **Onde os dados ficam salvos:** Os dados seguem o padrão XDG, normalmente em
+  `~/.local/share/buscador-manuais`. O local pode ser alterado definindo
+  `BUSCADOR_DATA_DIR` (prioritário) ou `XDG_DATA_HOME`:
+  * `search_index.db`: banco SQLite com textos indexados e metadados;
+  * `settings.json`: preferências locais;
+  * `history.json`: histórico local das pesquisas.
+  Na primeira execução após uma atualização, arquivos existentes na antiga
+  subpasta `data/` são copiados automaticamente para o novo local.
 
 ## Recursos de Performance e Acurácia
 

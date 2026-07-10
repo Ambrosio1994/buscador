@@ -5,7 +5,7 @@ Configurações e constantes globais do sistema.
 """
 
 import os
-
+import shutil
 import sys
 
 # Diretório base do projeto (onde este arquivo ou o executável está localizado)
@@ -14,8 +14,17 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Diretório de dados (onde o banco SQLite fica armazenado)
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Diretório de dados gravável do usuário. BUSCADOR_DATA_DIR facilita instalações
+# portáteis e testes; XDG_DATA_HOME segue o padrão dos desktops Linux.
+DATA_DIR = os.path.abspath(
+    os.environ.get(
+        "BUSCADOR_DATA_DIR",
+        os.path.join(
+            os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
+            "buscador-manuais",
+        ),
+    )
+)
 
 # Caminho do banco de dados SQLite
 DATABASE_PATH = os.path.join(DATA_DIR, "search_index.db")
@@ -49,8 +58,16 @@ PREFERRED_BROWSERS = [
 
 
 def garantir_diretorio_dados() -> None:
-    """Garante que o diretório de dados exista antes de usar o banco."""
+    """Cria o diretório XDG e importa dados legados ao lado do aplicativo."""
     os.makedirs(DATA_DIR, exist_ok=True)
+    diretorio_legado = os.path.join(BASE_DIR, "data")
+    if os.path.abspath(diretorio_legado) == DATA_DIR or not os.path.isdir(diretorio_legado):
+        return
+    for nome in ("search_index.db", "settings.json", "history.json"):
+        origem = os.path.join(diretorio_legado, nome)
+        destino = os.path.join(DATA_DIR, nome)
+        if os.path.isfile(origem) and not os.path.exists(destino):
+            shutil.copy2(origem, destino)
 
 
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")

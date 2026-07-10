@@ -154,6 +154,24 @@ class TestNormalizacaoDeConsulta(unittest.TestCase):
         termos = search.remover_palavras_irrelevantes(consulta)
         self.assertEqual(termos, ["finalidade", "operacoes", "defensivas"])
 
+    def test_preserva_codigo_tecnico_em_forma_compacta(self):
+        self.assertEqual(search.normalizar_consulta("Manual XP-400"), "manual xp 400 xp400")
+
+
+class TestBuscaMetadados(unittest.TestCase):
+    def test_encontra_codigo_presente_apenas_no_nome(self):
+        conn = database.conectar(":memory:")
+        try:
+            database.criar_banco(conn)
+            doc_id = database.inserir_documento(
+                conn, "Bomba-XP-400.pdf", "/hidraulica/Bomba-XP-400.pdf", 1, 1, 1, 1
+            )
+            database.inserir_pagina(conn, doc_id, 1, "Instruções gerais de manutenção")
+            resultados = search.buscar(conn, "XP-400")
+            self.assertEqual(resultados[0]["filename"], "Bomba-XP-400.pdf")
+        finally:
+            conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

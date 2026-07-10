@@ -9,6 +9,7 @@ as operações estruturais do banco (schema e CRUD básico).
 """
 
 import sqlite3
+import os
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
@@ -21,7 +22,8 @@ def conectar(db_path: str = DATABASE_PATH) -> sqlite3.Connection:
     e que chaves estrangeiras (ON DELETE CASCADE) sejam respeitadas.
     Também ativa configurações de alta performance (WAL, cache e sincronização).
     """
-    garantir_diretorio_dados()
+    if db_path == DATABASE_PATH:
+        garantir_diretorio_dados()
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
@@ -38,6 +40,9 @@ def get_connection(db_path: str = DATABASE_PATH) -> Iterator[sqlite3.Connection]
     try:
         yield conn
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -53,6 +58,7 @@ def criar_banco(conn: sqlite3.Connection) -> None:
             file_size INTEGER NOT NULL,
             modified_at REAL NOT NULL,
             sha256 TEXT,
+            source_root TEXT,
             total_pages INTEGER,
             indexed_at REAL NOT NULL
         );
@@ -64,6 +70,8 @@ def criar_banco(conn: sqlite3.Connection) -> None:
     colunas = [row["name"] for row in cursor.fetchall()]
     if "sha256" not in colunas:
         conn.execute("ALTER TABLE documents ADD COLUMN sha256 TEXT;")
+    if "source_root" not in colunas:
+        conn.execute("ALTER TABLE documents ADD COLUMN source_root TEXT;")
 
     conn.execute(
         """
@@ -107,6 +115,42 @@ def criar_banco(conn: sqlite3.Connection) -> None:
             tokenize='unicode61 remove_diacritics 2'
         );
         """
+    )
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+    )
+    versao_row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'normalization_version';"
+    ).fetchone()
+    refazer_normalizacao = versao_row is None or int(versao_row["value"]) < 2
+
+    # Backfill automático de bancos criados antes da normalização/stemming.
+    filtro = "" if refazer_normalizacao else "WHERE text_normalized IS NULL OR text_stemmed IS NULL"
+    pendentes = conn.execute(
+        f"SELECT id, text, text_normalized, text_stemmed FROM pages {filtro};"
+    ).fetchall()
+    if pendentes:
+        from search import normalizar_consulta, stemizar_texto
+
+        atualizacoes = []
+        for row in pendentes:
+            texto_norm = normalizar_consulta(row["text"]) if refazer_normalizacao else (
+                row["text_normalized"] or normalizar_consulta(row["text"])
+            )
+            texto_stem = stemizar_texto(texto_norm) if refazer_normalizacao else (
+                row["text_stemmed"] or stemizar_texto(texto_norm)
+            )
+            atualizacoes.append((texto_norm, texto_stem, row["id"]))
+        conn.executemany(
+            "UPDATE pages SET text_normalized = ?, text_stemmed = ? WHERE id = ?;",
+            atualizacoes,
+        )
+        conn.execute("INSERT INTO pages_fts(pages_fts) VALUES('rebuild');")
+        conn.execute("INSERT INTO pages_stemmed_fts(pages_stemmed_fts) VALUES('rebuild');")
+    conn.execute(
+        "INSERT INTO app_metadata(key, value) VALUES('normalization_version', '2') "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value;"
     )
 
     # Triggers para sincronização automática com o índice FTS5 (external content)
@@ -157,14 +201,15 @@ def inserir_documento(
     total_pages: int,
     indexed_at: float,
     sha256: str = "",
+    source_root: Optional[str] = None,
 ) -> int:
     """Insere um novo documento e retorna o id gerado."""
     cursor = conn.execute(
         """
-        INSERT INTO documents (filename, path, file_size, modified_at, sha256, total_pages, indexed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO documents (filename, path, file_size, modified_at, sha256, total_pages, indexed_at, source_root)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
         """,
-        (filename, path, file_size, modified_at, sha256, total_pages, indexed_at),
+        (filename, path, file_size, modified_at, sha256, total_pages, indexed_at, source_root),
     )
     return cursor.lastrowid
 
@@ -202,6 +247,24 @@ def listar_documentos(conn: sqlite3.Connection) -> list:
     """Retorna todos os documentos indexados."""
     cursor = conn.execute("SELECT * FROM documents;")
     return cursor.fetchall()
+
+
+def listar_documentos_da_origem(conn: sqlite3.Connection, source_root: str) -> list:
+    """Lista documentos vinculados a uma raiz, incluindo legados dentro dela."""
+    raiz = os.path.normcase(os.path.realpath(source_root))
+    documentos = []
+    for doc in listar_documentos(conn):
+        origem = doc["source_root"]
+        if origem and os.path.normcase(os.path.realpath(origem)) == raiz:
+            documentos.append(doc)
+            continue
+        if not origem:
+            try:
+                if os.path.commonpath([raiz, os.path.normcase(os.path.realpath(doc["path"]))]) == raiz:
+                    documentos.append(doc)
+            except ValueError:
+                pass
+    return documentos
 
 
 def remover_documento(conn: sqlite3.Connection, document_id: int) -> None:

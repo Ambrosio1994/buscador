@@ -13,6 +13,7 @@ Permite:
 
 import os
 import threading
+from collections import OrderedDict
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -47,6 +48,8 @@ class BuscadorApp(tk.Tk):
 
         self.pasta_selecionada: str | None = None
         self.resultados_atuais: list[search.ResultadoBusca] = []
+        self._busca_geracao = 0
+        self._cache_buscas = OrderedDict()
 
         self._construir_interface()
         self._configurar_banco()
@@ -285,6 +288,7 @@ class BuscadorApp(tk.Tk):
         self.status_var.set(f"Indexando [{atual}/{total}]: {nome_arquivo}...")
 
     def _indexacao_concluida(self, resultado: indexer.ResultadoIndexacao) -> None:
+        self._cache_buscas.clear()
         self.ultimo_resultado_indexacao = resultado
         self.botao_indexar.config(state=tk.NORMAL)
         self.progresso.pack_forget()
@@ -525,7 +529,9 @@ class BuscadorApp(tk.Tk):
         try:
             with database.get_connection(DATABASE_PATH) as conn:
                 conn.execute("DELETE FROM documents;")
+                conn.execute("DELETE FROM vocabulary;")
                 conn.commit()
+            self._cache_buscas.clear()
             
             for linha in self.tabela.get_children():
                 self.tabela.delete(linha)
@@ -590,14 +596,44 @@ class BuscadorApp(tk.Tk):
         self.entrada_busca["values"] = self.historico_buscas
 
         modo = self.modo_busca_var.get()
+        chave_cache = (search.normalizar_consulta(consulta), modo)
+        self._busca_geracao += 1
+        geracao = self._busca_geracao
+        if chave_cache in self._cache_buscas:
+            resultados = self._cache_buscas.pop(chave_cache)
+            self._cache_buscas[chave_cache] = resultados
+            self._exibir_resultados_busca(geracao, resultados, None)
+            return
 
+        self.status_var.set("Buscando...")
+        threading.Thread(
+            target=self._buscar_em_thread,
+            args=(geracao, chave_cache, consulta, modo),
+            daemon=True,
+        ).start()
+
+    def _buscar_em_thread(self, geracao, chave_cache, consulta, modo) -> None:
         try:
             with database.get_connection(DATABASE_PATH) as conn:
                 resultados = search.buscar(conn, consulta, modo=modo)
+            erro = None
         except Exception as exc:
-            messagebox.showerror("Erro na busca", str(exc))
-            return
+            resultados = []
+            erro = str(exc)
+        self.after(0, self._exibir_resultados_busca, geracao, resultados, erro, chave_cache)
 
+    def _exibir_resultados_busca(self, geracao, resultados, erro=None, chave_cache=None) -> None:
+        # Ignora respostas antigas quando uma consulta mais nova já foi iniciada.
+        if geracao != self._busca_geracao:
+            return
+        if erro:
+            messagebox.showerror("Erro na busca", erro)
+            self.status_var.set("Falha na busca.")
+            return
+        if chave_cache is not None:
+            self._cache_buscas[chave_cache] = resultados
+            while len(self._cache_buscas) > 32:
+                self._cache_buscas.popitem(last=False)
         self.resultados_atuais = resultados
 
         if not resultados:

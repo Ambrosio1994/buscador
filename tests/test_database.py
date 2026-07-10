@@ -105,6 +105,33 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(database.contar_documentos(self.conn), 0)
         self.assertEqual(database.contar_paginas(self.conn), 0)
 
+    def test_migracao_faz_backfill_e_reconstroi_fts_stemmed(self):
+        self.conn.execute(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, filename TEXT NOT NULL, "
+            "path TEXT NOT NULL UNIQUE, file_size INTEGER NOT NULL, modified_at REAL NOT NULL, "
+            "total_pages INTEGER, indexed_at REAL NOT NULL)"
+        )
+        self.conn.execute(
+            "CREATE TABLE pages (id INTEGER PRIMARY KEY, document_id INTEGER NOT NULL, "
+            "page_number INTEGER NOT NULL, text TEXT NOT NULL)"
+        )
+        self.conn.execute(
+            "INSERT INTO documents VALUES (1, 'manual.pdf', '/tmp/manual.pdf', 1, 1, 1, 1)"
+        )
+        self.conn.execute("INSERT INTO pages VALUES (1, 1, 1, 'Manuais técnicos')")
+
+        database.criar_banco(self.conn)
+
+        row = self.conn.execute(
+            "SELECT text_normalized, text_stemmed FROM pages WHERE id = 1"
+        ).fetchone()
+        self.assertEqual(row["text_normalized"], "manuais tecnicos")
+        self.assertTrue(row["text_stemmed"])
+        total = self.conn.execute(
+            "SELECT COUNT(*) AS total FROM pages_stemmed_fts WHERE pages_stemmed_fts MATCH 'manu*'"
+        ).fetchone()["total"]
+        self.assertEqual(total, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,7 @@ def _indexar_arquivo(
     caminho: str,
     registro_existente: Optional[sqlite3.Row],
     resultado: ResultadoIndexacao,
+    source_root: str,
 ) -> None:
     """Indexa (ou reindexa) um único arquivo PDF."""
     nome_arquivo = os.path.basename(caminho)
@@ -106,6 +107,7 @@ def _indexar_arquivo(
         total_pages=len(paginas),
         indexed_at=agora,
         sha256=sha256_val,
+        source_root=source_root,
     )
 
     from search import normalizar_consulta
@@ -136,8 +138,19 @@ def indexar_pasta(
     inicio = time.perf_counter()
     resultado = ResultadoIndexacao()
 
-    caminhos_na_pasta = listar_pdfs_da_pasta(pasta)
-    documentos_no_banco = {doc["path"]: doc for doc in database.listar_documentos(conn)}
+    if not os.path.isdir(pasta):
+        raise ValueError(f"Pasta de manuais inexistente ou inacessível: {pasta}")
+    source_root = os.path.realpath(os.path.abspath(pasta))
+
+    caminhos_na_pasta = listar_pdfs_da_pasta(source_root)
+    documentos_origem = database.listar_documentos_da_origem(conn, source_root)
+    documentos_no_banco = {doc["path"]: doc for doc in documentos_origem}
+
+    # Vincula registros legados à raiz sem exigir reindexação.
+    conn.executemany(
+        "UPDATE documents SET source_root = ? WHERE id = ? AND source_root IS NULL;",
+        [(source_root, doc["id"]) for doc in documentos_origem],
+    )
 
     # 1. Remove do banco documentos cujo arquivo não existe mais na pasta.
     caminhos_set = set(caminhos_na_pasta)
@@ -180,9 +193,10 @@ def indexar_pasta(
                 resultado.inalterados.append(nome_arquivo)
                 continue
 
-        _indexar_arquivo(conn, caminho, registro_existente, resultado)
+        _indexar_arquivo(conn, caminho, registro_existente, resultado, source_root)
 
-    database.atualizar_vocabulario(conn)
+    if resultado.novos or resultado.atualizados or resultado.removidos:
+        database.atualizar_vocabulario(conn)
     conn.commit()
 
     resultado.tempo_execucao = time.perf_counter() - inicio

@@ -140,9 +140,29 @@ class TestIndexer(unittest.TestCase):
         self.assertEqual(database.contar_documentos(self.conn), 0)
 
     def test_lidar_com_pasta_inexistente(self):
-        resultado = indexer.indexar_pasta(self.conn, "/caminho/que/nao/existe")
-        self.assertEqual(resultado.novos, [])
-        self.assertEqual(resultado.erros, [])
+        self._criar_pdf("manual1.pdf")
+        indexer.indexar_pasta(self.conn, self.diretorio_temp)
+
+        with self.assertRaises(ValueError):
+            indexer.indexar_pasta(self.conn, "/caminho/que/nao/existe")
+        self.assertEqual(database.contar_documentos(self.conn), 1)
+
+    def test_indexar_outra_raiz_preserva_documentos_anteriores(self):
+        outra_pasta = tempfile.mkdtemp()
+        try:
+            self._criar_pdf("manual1.pdf")
+            indexer.indexar_pasta(self.conn, self.diretorio_temp)
+
+            caminho = os.path.join(outra_pasta, "manual2.pdf")
+            doc = fitz.open()
+            doc.new_page().insert_text((72, 72), "Conteudo da segunda raiz")
+            doc.save(caminho)
+            doc.close()
+            indexer.indexar_pasta(self.conn, outra_pasta)
+
+            self.assertEqual(database.contar_documentos(self.conn), 2)
+        finally:
+            shutil.rmtree(outra_pasta, ignore_errors=True)
 
 
 if __name__ == "__main__":

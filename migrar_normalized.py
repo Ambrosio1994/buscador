@@ -51,12 +51,11 @@ def executar_migracao():
                 if contador % 100 == 0 or contador == total:
                     print(f"Progresso: {contador} páginas migradas...")
         
-        # Sincroniza a tabela virtual FTS5 de stemming
-        print("Sincronizando índice virtual FTS5 de radical (stemming)...")
-        conn.execute("DELETE FROM pages_stemmed_fts;")
-        conn.execute(
-            "INSERT INTO pages_stemmed_fts (rowid, text_stemmed) SELECT id, text_stemmed FROM pages;"
-        )
+        # Reconstrói os índices external-content pelo comando suportado do FTS5.
+        print("Sincronizando índices virtuais FTS5...")
+        conn.execute("INSERT INTO pages_fts(pages_fts) VALUES('rebuild');")
+        conn.execute("INSERT INTO pages_stemmed_fts(pages_stemmed_fts) VALUES('rebuild');")
+        database.atualizar_vocabulario(conn)
         
         # Validação
         cursor_val = conn.execute(

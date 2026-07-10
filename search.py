@@ -25,6 +25,10 @@ class ResultadoBusca(TypedDict):
     relevance_label: str
 
 
+class ErroBusca(RuntimeError):
+    """Falha estrutural ao consultar os índices FTS."""
+
+
 def _remover_acentos(texto: str) -> str:
     """Remove acentuação, preservando as letras base (á -> a, ç -> c, etc.)."""
     forma_normalizada = unicodedata.normalize("NFKD", texto)
@@ -39,10 +43,15 @@ def normalizar_consulta(consulta: str) -> str:
     3. remove pontuação desnecessária;
     4. remove excesso de espaços.
     """
-    texto = consulta.lower()
-    texto = _remover_acentos(texto)
+    texto = _remover_acentos(consulta.lower())
+    # Além dos componentes, indexa a forma compacta de códigos técnicos:
+    # "XP-400" -> "xp 400 xp400" e "AB.12/7" -> "ab 12 7 ab127".
+    codigos = re.findall(r"\b[\w]+(?:[-./][\w]+)+\b", texto)
+    compactos = [re.sub(r"[-./]", "", codigo) for codigo in codigos]
     texto = re.sub(r"[^\w\s]", " ", texto)  # remove pontuação, mantém letras/números/underscore
     texto = re.sub(r"\s+", " ", texto).strip()
+    if compactos:
+        texto = f"{texto} {' '.join(compactos)}".strip()
     return texto
 
 
@@ -220,25 +229,45 @@ def buscar(
         return []
 
     termos = remover_palavras_irrelevantes(consulta_normalizada)
-    
+
+    query_original = montar_query_fts(termos, modo)
+    if not query_original:
+        return []
+    try:
+        possui_resultado_original = conn.execute(
+            "SELECT 1 FROM pages_fts WHERE pages_fts MATCH ? LIMIT 1;",
+            (query_original,),
+        ).fetchone() is not None
+    except sqlite3.OperationalError as exc:
+        raise ErroBusca(f"Falha ao consultar o índice textual: {exc}") from exc
+
     # Spellcheck/Fuzzy Correction usando vocabulário local
     import difflib
-    try:
-        cursor_vocab = conn.execute("SELECT word FROM vocabulary;")
-        vocabulario = {row["word"] for row in cursor_vocab.fetchall()}
-    except Exception:
-        vocabulario = set()
-
     termos_corrigidos = []
     for t in termos:
+        if possui_resultado_original:
+            termos_corrigidos.append(t)
+            continue
         if len(t) < 4:
             termos_corrigidos.append(t)
             continue
         # Se o termo já existe (ou tem palavra começando com ele), não altera
-        if t in vocabulario or any(w.startswith(t) for w in vocabulario):
+        existente = conn.execute(
+            "SELECT 1 FROM vocabulary WHERE word >= ? AND word < ? LIMIT 1;",
+            (t, t + "\U0010ffff"),
+        ).fetchone()
+        if existente:
             termos_corrigidos.append(t)
         else:
-            matches = difflib.get_close_matches(t, vocabulario, n=1, cutoff=0.75)
+            # Restringe o fuzzy a palavras de tamanho próximo e mesma inicial.
+            candidatos = conn.execute(
+                "SELECT word FROM vocabulary WHERE word LIKE ? "
+                "AND length(word) BETWEEN ? AND ? LIMIT 500;",
+                (t[0] + "%", max(1, len(t) - 2), len(t) + 2),
+            ).fetchall()
+            matches = difflib.get_close_matches(
+                t, [row["word"] for row in candidatos], n=1, cutoff=0.75
+            )
             if matches:
                 termos_corrigidos.append(matches[0])
             else:
@@ -298,18 +327,33 @@ def buscar(
     try:
         cursor = conn.execute(sql_exact, (SNIPPET_CONTEXT_WORDS, query_fts, limite_sql))
         rows_exact = cursor.fetchall()
-    except sqlite3.OperationalError:
-        pass
+    except sqlite3.OperationalError as exc:
+        raise ErroBusca(f"Falha ao consultar o índice textual: {exc}") from exc
 
     rows_stemmed = []
-    try:
-        cursor_s = conn.execute(sql_stemmed, (SNIPPET_CONTEXT_WORDS, query_fts_stemmed, limite_sql))
-        rows_stemmed = cursor_s.fetchall()
-    except sqlite3.OperationalError:
-        pass
+    if len(rows_exact) < limite:
+        try:
+            cursor_s = conn.execute(sql_stemmed, (SNIPPET_CONTEXT_WORDS, query_fts_stemmed, limite_sql))
+            rows_stemmed = cursor_s.fetchall()
+        except sqlite3.OperationalError as exc:
+            raise ErroBusca(f"Falha ao consultar o índice por radical: {exc}") from exc
 
     if not rows_exact and not rows_stemmed:
-        return []
+        resultados_metadados = []
+        for doc in conn.execute("SELECT filename, path FROM documents;"):
+            metadados = normalizar_consulta(f"{doc['filename']} {doc['path']}")
+            palavras = metadados.split()
+            encontrados = sum(1 for termo in termos if any(w.startswith(termo) for w in palavras))
+            corresponde = encontrados == len(termos) if modo in ("preciso", "frase") else encontrados > 0
+            if corresponde:
+                resultados_metadados.append({
+                    "filename": doc["filename"], "path": doc["path"], "page_number": 1,
+                    "snippet": f"Correspondência no nome ou categoria do manual: [{doc['filename']}]",
+                    "score": 0.90 + 0.10 * (encontrados / len(termos)),
+                    "relevance_label": "Alta" if encontrados == len(termos) else "Média",
+                })
+        resultados_metadados.sort(key=lambda x: x["score"], reverse=True)
+        return resultados_metadados[:limite]
 
     L = len(termos)
     candidatos_dict = {}
@@ -396,7 +440,36 @@ def buscar(
             "relevance_label": relevancia,
         })
 
-    # Ordena pelo score final combinado decrescente
+    # Nome e caminho do manual funcionam como metadados de alta relevância.
+    # Isso encontra códigos/categorias presentes apenas no nome do arquivo.
+    chaves_existentes = {(r["path"], r["page_number"]) for r in resultados_brutos}
+    for doc in conn.execute("SELECT filename, path FROM documents;"):
+        metadados = normalizar_consulta(f"{doc['filename']} {doc['path']}")
+        encontrados = sum(1 for termo in termos if any(w.startswith(termo) for w in metadados.split()))
+        corresponde = encontrados == L if modo in ("preciso", "frase") else encontrados > 0
+        if corresponde and (doc["path"], 1) not in chaves_existentes:
+            resultados_brutos.append({
+                "filename": doc["filename"],
+                "path": doc["path"],
+                "page_number": 1,
+                "snippet": f"Correspondência no nome ou categoria do manual: [{doc['filename']}]",
+                "score": 0.90 + 0.10 * (encontrados / L),
+                "relevance_label": "Alta" if encontrados == L else "Média",
+            })
+        elif corresponde:
+            for resultado in resultados_brutos:
+                if resultado["path"] == doc["path"]:
+                    resultado["score"] += 0.12 * (encontrados / L)
+
+    # Ordena e promove diversidade: no máximo duas páginas por manual na
+    # primeira passagem, preenchendo vagas restantes depois.
     resultados_brutos.sort(key=lambda x: x["score"], reverse=True)
-    
-    return resultados_brutos[:limite]
+    diversos = []
+    excedentes = []
+    por_documento = {}
+    for resultado in resultados_brutos:
+        path = resultado["path"]
+        por_documento[path] = por_documento.get(path, 0) + 1
+        (diversos if por_documento[path] <= 2 else excedentes).append(resultado)
+
+    return (diversos + excedentes)[:limite]
